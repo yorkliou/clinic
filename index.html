@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>昌德中醫診所 休診公告</title>
+<style>
+  :root { --bg:#faf7f2; --card:#fff; --text:#2b2b2b; --muted:#8a8a8a; --off:#d64545; --line:#eee; --accent:#3a6ea5; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:-apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif; }
+  main { max-width:480px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:1.6rem; margin:0 0 4px; text-align:center; }
+  .sub { text-align:center; color:var(--muted); margin:0 0 20px; font-size:.9rem; }
+  .today { background:var(--card); border-radius:14px; padding:16px; text-align:center;
+           font-size:1.15rem; font-weight:600; box-shadow:0 1px 4px rgba(0,0,0,.06); margin-bottom:20px; }
+  .today.off { background:var(--off); color:#fff; }
+  .month { background:var(--card); border-radius:14px; padding:14px; margin-bottom:16px;
+           box-shadow:0 1px 4px rgba(0,0,0,.06); }
+  .month h2 { font-size:1.05rem; margin:0 0 10px; text-align:center; }
+  .grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; text-align:center; }
+  .wd { font-size:.75rem; color:var(--muted); padding-bottom:4px; }
+  .d { aspect-ratio:1; display:flex; align-items:center; justify-content:center;
+       border-radius:50%; font-size:.95rem; }
+  .d.past { color:#ccc; }
+  .d.off { background:var(--off); color:#fff; font-weight:700; }
+  .d.off.past { background:#f0caca; color:#fff; }
+  .d.now { outline:2px solid var(--accent); outline-offset:-2px; }
+  h3 { font-size:1rem; margin:24px 0 8px; }
+  ul { list-style:none; padding:0; margin:0; }
+  li { background:var(--card); border-radius:10px; padding:10px 14px; margin-bottom:6px;
+       display:flex; justify-content:space-between; gap:12px; }
+  li .n { color:var(--muted); font-size:.9rem; }
+  .legend { text-align:center; color:var(--muted); font-size:.85rem; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:50%;
+              background:var(--off); margin-right:4px; vertical-align:middle; }
+  .sub a { color:var(--accent); text-decoration:none; }
+  .today small { display:block; font-weight:400; font-size:.85rem; margin-top:6px; opacity:.85; }
+  .sched { width:100%; border-collapse:collapse; background:var(--card); border-radius:14px;
+           overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,.06); font-size:.88rem; text-align:center; }
+  .sched th, .sched td { padding:8px 4px; border-bottom:1px solid var(--line); }
+  .sched th { color:var(--muted); font-weight:500; }
+  .sched td.x { color:#ccc; }
+  .sched tr.now td { background:#eef4fb; font-weight:600; }
+  #status { text-align:center; color:var(--muted); font-size:.75rem; margin-top:24px; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="shop"></h1>
+  <p class="sub" id="info"></p>
+  <div class="today" id="today">載入中…</div>
+  <div id="months"></div>
+  <p class="legend"><i></i>休診日</p>
+  <h3>門診時間</h3>
+  <table class="sched" id="sched"></table>
+  <h3>近期休診</h3>
+  <ul id="list"></ul>
+  <p id="status"></p>
+</main>
+
+<script>
+// ====== 只需要改這裡 ======
+const CONFIG = {
+  shopName: '昌德中醫診所',
+  address: '彰化縣秀水鄉福安村中山路529號',
+  phone: '04-769-1539',
+  // 門診時段（依 Google 地圖），index 0=日 … 6=六，每列 [早診, 午診, 晚診]，'' 代表沒有
+  sessionNames: ['早診', '午診', '晚診'],
+  schedule: [
+    ['', '', ''],                                     // 日
+    ['09:00–12:00', '14:30–18:00', '19:00–21:00'],    // 一
+    ['', '14:30–18:00', '19:00–21:00'],               // 二
+    ['09:00–12:00', '14:30–18:00', ''],               // 三
+    ['', '14:30–18:00', '19:00–21:00'],               // 四
+    ['09:00–12:00', '14:30–18:00', '19:00–21:00'],    // 五
+    ['09:00–12:00', '', ''],                          // 六
+  ],
+  // Google 試算表「發布到網路」的 CSV 網址（留空就用下面的 fallbackDates）
+  sheetCsvUrl: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRZCjlHcfNToJaehk5nrRxpwOpMMv8TEp4mN3vLRBrJbl8lCKQbpBG6s8UAxruzW9TxotNGmTQoyXax/pub?gid=0&single=true&output=csv',
+  // 每週固定公休：0=日 1=一 2=二 3=三 4=四 5=五 6=六，例如 [1] 代表每週一休
+  weeklyOff: [0],
+  // 沒接試算表時，直接在這裡寫休息日：['日期', '備註']
+  fallbackDates: [],
+  monthsToShow: 2,
+};
+// ==========================
+
+const WD = ['日','一','二','三','四','五','六'];
+const pad = n => String(n).padStart(2, '0');
+const key = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+
+// 接受 2026-10-27、2026/10/27、2026.10.27
+function normDate(s) {
+  const m = String(s).match(/(\d{4})\D(\d{1,2})\D(\d{1,2})/);
+  return m ? `${m[1]}-${pad(m[2])}-${pad(m[3])}` : null;
+}
+
+function parseCsv(text) {
+  return text.split(/\r?\n/).map(line => {
+    const cells = []; let cur = '', q = false;
+    for (const ch of line) {
+      if (ch === '"') q = !q;
+      else if (ch === ',' && !q) { cells.push(cur); cur = ''; }
+      else cur += ch;
+    }
+    cells.push(cur);
+    return cells.map(c => c.trim());
+  });
+}
+
+async function loadDates() {
+  if (!CONFIG.sheetCsvUrl) return { rows: CONFIG.fallbackDates, src: '內建清單' };
+  try {
+    const sep = CONFIG.sheetCsvUrl.includes('?') ? '&' : '?';
+    const res = await fetch(CONFIG.sheetCsvUrl + sep + 't=' + Date.now());
+    if (!res.ok) throw new Error(res.status);
+    return { rows: parseCsv(await res.text()), src: '線上試算表' };
+  } catch (e) {
+    return { rows: CONFIG.fallbackDates, src: '內建清單（試算表讀取失敗）' };
+  }
+}
+
+function render(offMap) {
+  const now = new Date(); now.setHours(0,0,0,0);
+  const isOff = d => offMap.has(key(d)) || CONFIG.weeklyOff.includes(d.getDay());
+  const noteOf = d => offMap.get(key(d)) || (CONFIG.weeklyOff.includes(d.getDay()) ? '每週休診' : '');
+
+  document.getElementById('shop').textContent = CONFIG.shopName;
+  document.title = `${CONFIG.shopName} 休診公告`;
+  document.getElementById('info').innerHTML =
+    `${CONFIG.address}<br><a href="tel:${CONFIG.phone.replace(/\D/g, '')}">☎ ${CONFIG.phone}</a>`;
+
+  const t = document.getElementById('today');
+  const label = `今天 ${now.getMonth()+1}/${now.getDate()}（${WD[now.getDay()]}）`;
+  if (isOff(now)) {
+    t.classList.add('off');
+    const n = noteOf(now);
+    t.textContent = `${label} 休診${n ? '・' + n : ''}`;
+  } else {
+    const s = CONFIG.schedule[now.getDay()]
+      .map((h, i) => h && `${CONFIG.sessionNames[i]} ${h}`).filter(Boolean).join('　');
+    t.innerHTML = `${label} 正常看診<small>${s}</small>`;
+  }
+
+  const sched = document.getElementById('sched');
+  const order = [1, 2, 3, 4, 5, 6, 0];
+  sched.innerHTML = `<tr><th></th>${CONFIG.sessionNames.map(n => `<th>${n}</th>`).join('')}</tr>` +
+    order.map(w => {
+      const row = CONFIG.schedule[w];
+      const cells = row.every(h => !h)
+        ? `<td class="x" colspan="${row.length}">休診</td>`
+        : row.map(h => h ? `<td>${h}</td>` : '<td class="x">—</td>').join('');
+      return `<tr class="${w === now.getDay() ? 'now' : ''}"><td>週${WD[w]}</td>${cells}</tr>`;
+    }).join('');
+
+  const box = document.getElementById('months');
+  box.innerHTML = '';
+  for (let i = 0; i < CONFIG.monthsToShow; i++) {
+    const first = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    const days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    let html = `<div class="month"><h2>${first.getFullYear()} 年 ${first.getMonth()+1} 月</h2><div class="grid">`;
+    html += WD.map(w => `<div class="wd">${w}</div>`).join('');
+    html += '<div></div>'.repeat(first.getDay());
+    for (let d = 1; d <= days; d++) {
+      const dt = new Date(first.getFullYear(), first.getMonth(), d);
+      const cls = ['d'];
+      if (isOff(dt)) cls.push('off');
+      if (dt < now) cls.push('past');
+      if (+dt === +now) cls.push('now');
+      html += `<div class="${cls.join(' ')}" title="${noteOf(dt)}">${d}</div>`;
+    }
+    box.insertAdjacentHTML('beforeend', html + '</div></div>');
+  }
+
+  const list = document.getElementById('list');
+  const upcoming = [...offMap.entries()]
+    .filter(([k]) => k >= key(now)).sort(([a],[b]) => a.localeCompare(b)).slice(0, 8);
+  list.innerHTML = upcoming.length
+    ? upcoming.map(([k, n]) => {
+        const d = new Date(k + 'T00:00');
+        return `<li><span>${d.getMonth()+1}/${d.getDate()}（${WD[d.getDay()]}）</span><span class="n">${n}</span></li>`;
+      }).join('')
+    : '<li><span>近期沒有特別休診</span></li>';
+  if (CONFIG.weeklyOff.length)
+    list.insertAdjacentHTML('beforeend',
+      `<li><span>每週${CONFIG.weeklyOff.map(w => WD[w]).join('、')}</span><span class="n">固定休診</span></li>`);
+}
+
+loadDates().then(({ rows, src }) => {
+  const offMap = new Map();
+  for (const [d, note = ''] of rows) {
+    const k = normDate(d);
+    if (k) offMap.set(k, note);
+  }
+  render(offMap);
+  document.getElementById('status').textContent = `資料來源：${src}`;
+});
+</script>
+</body>
+</html>
