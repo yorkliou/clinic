@@ -29,6 +29,10 @@
   .d.part.past { background:#f6dcb5; }
   .today.part { background:var(--part); color:#fff; }
   .legend i.p { background:var(--part); margin-left:4px; }
+  .d[data-k] { cursor:pointer; }
+  .d.sel { box-shadow:0 0 0 3px var(--text); }
+  .today .back { display:block; margin:10px auto 0; padding:4px 14px; border:1px solid currentColor;
+                 border-radius:999px; background:transparent; color:inherit; font:inherit; font-size:.85rem; cursor:pointer; }
   .d.now { outline:2px solid var(--accent); outline-offset:-2px; }
   h3 { font-size:1rem; margin:24px 0 8px; }
   ul { list-style:none; padding:0; margin:0; }
@@ -55,7 +59,7 @@
   <p class="sub" id="info"></p>
   <div class="today" id="today">載入中…</div>
   <div id="months"></div>
-  <p class="legend"><i></i>全天休診　<i class="p"></i>部分時段休診</p>
+  <p class="legend"><i></i>全天休診　<i class="p"></i>部分時段休診<br>點日期可查看當天看診時段</p>
   <h3>門診時間</h3>
   <table class="sched" id="sched"></table>
   <h3>近期休診</h3>
@@ -155,22 +159,35 @@ function render(offMap) {
   document.getElementById('info').innerHTML =
     `${CONFIG.address}<br><a href="tel:${CONFIG.phone.replace(/\D/g, '')}">☎ ${CONFIG.phone}</a>`;
 
+  // 上方狀態卡：預設顯示今天，點月曆上的日期就換成那一天
   const t = document.getElementById('today');
-  const label = `今天 ${now.getMonth()+1}/${now.getDate()}（${WD[now.getDay()]}）`;
-  const st = statusOf(now);
-  if (st.type === 'full') {
-    t.classList.add('off');
-    t.textContent = `${label} 休診${st.note ? '・' + st.note : ''}`;
-  } else if (st.type === 'part') {
-    t.classList.add('part');
-    const s = openIdx(now).filter(i => !st.closed.includes(i))
-      .map(i => `${CONFIG.sessionNames[i]} ${CONFIG.schedule[now.getDay()][i]}`).join('　');
-    t.innerHTML = `${label} ${closedLabel(st)}${st.note ? '・' + st.note : ''}<small>照常看診：${s}</small>`;
-  } else {
-    const s = CONFIG.schedule[now.getDay()]
-      .map((h, i) => h && `${CONFIG.sessionNames[i]} ${h}`).filter(Boolean).join('　');
-    t.innerHTML = `${label} 正常看診<small>${s}</small>`;
+  function showDay(d) {
+    const isToday = +d === +now;
+    const label = `${isToday ? '今天 ' : ''}${d.getMonth()+1}/${d.getDate()}（${WD[d.getDay()]}）`;
+    // 今天也保留按鈕位置（隱藏），避免卡片高度變動讓月曆跳動
+    const back = `<button class="back" type="button"${isToday ? ' style="visibility:hidden" tabindex="-1"' : ''}>← 回到今天</button>`;
+    const st = statusOf(d);
+    t.classList.remove('off', 'part');
+    if (st.type === 'full') {
+      t.classList.add('off');
+      t.innerHTML = `${label} 休診<small>${st.note || '全天不看診'}</small>${back}`;
+    } else if (st.type === 'part') {
+      t.classList.add('part');
+      const s = openIdx(d).filter(i => !st.closed.includes(i))
+        .map(i => `${CONFIG.sessionNames[i]} ${CONFIG.schedule[d.getDay()][i]}`).join('　');
+      t.innerHTML = `${label} ${closedLabel(st)}${st.note ? '・' + st.note : ''}<small>照常看診：${s}</small>${back}`;
+    } else {
+      const s = CONFIG.schedule[d.getDay()]
+        .map((h, i) => h && `${CONFIG.sessionNames[i]} ${h}`).filter(Boolean).join('　');
+      t.innerHTML = `${label} 正常看診<small>${s}</small>${back}`;
+    }
+    document.querySelectorAll('.d.sel').forEach(el => el.classList.remove('sel'));
+    if (!isToday) {
+      document.querySelector(`.d[data-k="${key(d)}"]`)?.classList.add('sel');
+      if (t.getBoundingClientRect().top < 0) t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }
+  t.addEventListener('click', e => { if (e.target.closest('.back')) showDay(now); });
 
   const sched = document.getElementById('sched');
   const order = [1, 2, 3, 4, 5, 6, 0];
@@ -199,10 +216,15 @@ function render(offMap) {
       if (t === 'part') cls.push('part');
       if (dt < now) cls.push('past');
       if (+dt === +now) cls.push('now');
-      html += `<div class="${cls.join(' ')}" title="${noteOf(dt)}">${d}</div>`;
+      html += `<div class="${cls.join(' ')}" data-k="${key(dt)}" title="${noteOf(dt)}">${d}</div>`;
     }
     box.insertAdjacentHTML('beforeend', html + '</div></div>');
   }
+  box.addEventListener('click', e => {
+    const el = e.target.closest('.d[data-k]');
+    if (el) showDay(new Date(el.dataset.k + 'T00:00'));
+  });
+  showDay(now);
 
   const list = document.getElementById('list');
   const upcoming = [...offMap.keys()]
