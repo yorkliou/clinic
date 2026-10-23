@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>昌德中醫診所 休診公告</title>
 <style>
-  :root { --bg:#faf7f2; --card:#fff; --text:#2b2b2b; --muted:#8a8a8a; --off:#d64545; --line:#eee; --accent:#3a6ea5; }
+  :root { --bg:#faf7f2; --card:#fff; --text:#2b2b2b; --muted:#8a8a8a; --off:#d64545; --part:#e8952f; --line:#eee; --accent:#3a6ea5; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
          font-family:-apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif; }
@@ -25,6 +25,10 @@
   .d.past { color:#ccc; }
   .d.off { background:var(--off); color:#fff; font-weight:700; }
   .d.off.past { background:#f0caca; color:#fff; }
+  .d.part { background:var(--part); color:#fff; font-weight:700; }
+  .d.part.past { background:#f6dcb5; }
+  .today.part { background:var(--part); color:#fff; }
+  .legend i.p { background:var(--part); margin-left:4px; }
   .d.now { outline:2px solid var(--accent); outline-offset:-2px; }
   h3 { font-size:1rem; margin:24px 0 8px; }
   ul { list-style:none; padding:0; margin:0; }
@@ -51,7 +55,7 @@
   <p class="sub" id="info"></p>
   <div class="today" id="today">載入中…</div>
   <div id="months"></div>
-  <p class="legend"><i></i>休診日</p>
+  <p class="legend"><i></i>全天休診　<i class="p"></i>部分時段休診</p>
   <h3>門診時間</h3>
   <table class="sched" id="sched"></table>
   <h3>近期休診</h3>
@@ -80,7 +84,7 @@ const CONFIG = {
   sheetCsvUrl: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRZCjlHcfNToJaehk5nrRxpwOpMMv8TEp4mN3vLRBrJbl8lCKQbpBG6s8UAxruzW9TxotNGmTQoyXax/pub?gid=0&single=true&output=csv',
   // 每週固定公休：0=日 1=一 2=二 3=三 4=四 5=五 6=六，例如 [1] 代表每週一休
   weeklyOff: [0],
-  // 沒接試算表時，直接在這裡寫休息日：['日期', '備註']
+  // 沒接試算表時，直接在這裡寫休息日：['日期', '休診時段（空白=全天）', '備註']
   fallbackDates: [],
   monthsToShow: 2,
 };
@@ -121,10 +125,30 @@ async function loadDates() {
   }
 }
 
+// 「早診」「午診+晚診」→ [0] / [1, 2]；空白或「全天」→ null（整天）
+function parseSessions(s) {
+  const idx = ['早', '午', '晚'].map((c, i) => String(s).includes(c) ? i : -1).filter(i => i >= 0);
+  return idx.length ? idx : null;
+}
+
 function render(offMap) {
   const now = new Date(); now.setHours(0,0,0,0);
-  const isOff = d => offMap.has(key(d)) || CONFIG.weeklyOff.includes(d.getDay());
-  const noteOf = d => offMap.get(key(d)) || (CONFIG.weeklyOff.includes(d.getDay()) ? '每週休診' : '');
+  const openIdx = d => CONFIG.schedule[d.getDay()].map((h, i) => h ? i : -1).filter(i => i >= 0);
+
+  // 回傳 { type: 'full' | 'part' | 'open', closed: [時段 index], note }
+  function statusOf(d) {
+    if (CONFIG.weeklyOff.includes(d.getDay())) return { type: 'full', closed: [], note: '每週休診' };
+    const e = offMap.get(key(d));
+    if (!e) return { type: 'open', closed: [], note: '' };
+    const open = openIdx(d);
+    const closed = e.sessions ? open.filter(i => e.sessions.includes(i)) : open;
+    if (!closed.length) return { type: 'open', closed: [], note: '' };
+    return { type: closed.length === open.length ? 'full' : 'part', closed, note: e.note };
+  }
+  const closedLabel = st => st.type === 'full' ? '全天休診'
+    : st.closed.map(i => CONFIG.sessionNames[i]).join('、') + '休診';
+  const isOff = d => statusOf(d).type === 'full';
+  const noteOf = d => { const st = statusOf(d); return st.type === 'open' ? '' : closedLabel(st) + (st.note ? '・' + st.note : ''); };
 
   document.getElementById('shop').textContent = CONFIG.shopName;
   document.title = `${CONFIG.shopName} 休診公告`;
@@ -133,10 +157,15 @@ function render(offMap) {
 
   const t = document.getElementById('today');
   const label = `今天 ${now.getMonth()+1}/${now.getDate()}（${WD[now.getDay()]}）`;
-  if (isOff(now)) {
+  const st = statusOf(now);
+  if (st.type === 'full') {
     t.classList.add('off');
-    const n = noteOf(now);
-    t.textContent = `${label} 休診${n ? '・' + n : ''}`;
+    t.textContent = `${label} 休診${st.note ? '・' + st.note : ''}`;
+  } else if (st.type === 'part') {
+    t.classList.add('part');
+    const s = openIdx(now).filter(i => !st.closed.includes(i))
+      .map(i => `${CONFIG.sessionNames[i]} ${CONFIG.schedule[now.getDay()][i]}`).join('　');
+    t.innerHTML = `${label} ${closedLabel(st)}${st.note ? '・' + st.note : ''}<small>照常看診：${s}</small>`;
   } else {
     const s = CONFIG.schedule[now.getDay()]
       .map((h, i) => h && `${CONFIG.sessionNames[i]} ${h}`).filter(Boolean).join('　');
@@ -165,7 +194,9 @@ function render(offMap) {
     for (let d = 1; d <= days; d++) {
       const dt = new Date(first.getFullYear(), first.getMonth(), d);
       const cls = ['d'];
-      if (isOff(dt)) cls.push('off');
+      const t = statusOf(dt).type;
+      if (t === 'full') cls.push('off');
+      if (t === 'part') cls.push('part');
       if (dt < now) cls.push('past');
       if (+dt === +now) cls.push('now');
       html += `<div class="${cls.join(' ')}" title="${noteOf(dt)}">${d}</div>`;
@@ -174,13 +205,15 @@ function render(offMap) {
   }
 
   const list = document.getElementById('list');
-  const upcoming = [...offMap.entries()]
-    .filter(([k]) => k >= key(now)).sort(([a],[b]) => a.localeCompare(b)).slice(0, 8);
+  const upcoming = [...offMap.keys()]
+    .filter(k => k >= key(now)).sort()
+    .map(k => new Date(k + 'T00:00'))
+    .filter(d => statusOf(d).type !== 'open' && !CONFIG.weeklyOff.includes(d.getDay()))
+    .slice(0, 8);
   list.innerHTML = upcoming.length
-    ? upcoming.map(([k, n]) => {
-        const d = new Date(k + 'T00:00');
-        return `<li><span>${d.getMonth()+1}/${d.getDate()}（${WD[d.getDay()]}）</span><span class="n">${n}</span></li>`;
-      }).join('')
+    ? upcoming.map(d =>
+        `<li><span>${d.getMonth()+1}/${d.getDate()}（${WD[d.getDay()]}）</span><span class="n">${noteOf(d)}</span></li>`
+      ).join('')
     : '<li><span>近期沒有特別休診</span></li>';
   if (CONFIG.weeklyOff.length)
     list.insertAdjacentHTML('beforeend',
@@ -189,9 +222,9 @@ function render(offMap) {
 
 loadDates().then(({ rows, src }) => {
   const offMap = new Map();
-  for (const [d, note = ''] of rows) {
+  for (const [d, sess = '', note = ''] of rows) {
     const k = normDate(d);
-    if (k) offMap.set(k, note);
+    if (k) offMap.set(k, { sessions: parseSessions(sess), note });
   }
   render(offMap);
   document.getElementById('status').textContent = `資料來源：${src}`;
